@@ -118,3 +118,43 @@ AWS 환경에서 네트워크 분리, IAM 최소권한, 자동 취약점 진단,
 - [ ] 4단계: 보안그룹/NACL 및 EC2 배포
 - [ ] 5단계: 자동 진단 및 검증
 - [ ] 6단계: 로깅/모니터링 구축
+
+## Stage 4: 보안 그룹 / NACL / EC2 배포
+
+### 구성 요약
+- Bastion Host (public-subnet-a, 10.0.1.0/24): 내 IP에서 오는 SSH만 허용 (bastion-sg)
+- Web Server (private-subnet-a, 10.0.11.0/24): 퍼블릭 IP 없음, bastion-sg에서 오는 SSH만 허용 (web-sg)
+- private-nacl: private-subnet-a, private-subnet-c에 연결. public 서브넷은 기본 NACL 유지
+
+### 보안 그룹
+| 이름 | 인바운드 | 목적 |
+|---|---|---|
+| bastion-sg | SSH(22) / 내 IP | 관리자 진입점 |
+| web-sg | SSH(22) / bastion-sg | bastion을 거친 접속만 허용 |
+
+### private-nacl 규칙
+인바운드
+| 번호 | 프로토콜/포트 | 소스 | 동작 |
+|---|---|---|---|
+| 100 | TCP 22 | 10.0.1.0/24 | 허용 |
+| 110 | TCP 1024-65535 | 0.0.0.0/0 | 허용 |
+| * | 전체 | 0.0.0.0/0 | 거부 |
+
+아웃바운드
+| 번호 | 프로토콜/포트 | 대상 | 동작 |
+|---|---|---|---|
+| 100 | TCP 443 | 0.0.0.0/0 | 허용 |
+| 110 | TCP 80 | 0.0.0.0/0 | 허용 |
+| 120 | TCP 1024-65535 | 10.0.1.0/24 | 허용 |
+| * | 전체 | 0.0.0.0/0 | 거부 |
+
+### 검증 결과
+1. bastion을 경유한 web-server SSH 접속: 성공
+2. web-server에서 curl -I https://aws.amazon.com (NAT Gateway 경유): HTTP/2 200
+3. 노트북에서 web-server 프라이빗 IP로 직접 SSH 시도: Connection timed out (차단 확인)
+
+### 설계 포인트
+- 심층 방어: 인스턴스 단위(보안 그룹)와 서브넷 단위(NACL)로 이중 통제
+- NACL은 Stateless라서 SSH 응답과 외부 통신 응답용 임시 포트(1024-65535) 규칙을 별도로 열어야 함
+- 개인 키를 bastion에 복사하지 않고 ProxyCommand(점프 호스트 방식)로 접속
+- web-server는 퍼블릭 IP가 없고, 외부 통신은 NAT Gateway를 통해서만 나감
